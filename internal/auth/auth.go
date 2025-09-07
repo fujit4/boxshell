@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"golang.org/x/oauth2"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
 const (
-	redirectURL = "http://localhost:8585/oauth/callback"
+	defaultRedirectURL = "http://localhost:8585/oauth/callback"
 )
 
 // NewClient は認証済みの http.Client を返します。
@@ -23,13 +25,13 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 	}
 
 
-tokenPath, err := getTokenPath()
+	tokenPath, err := getTokenPath()
 	if err != nil {
 		return nil, err
 	}
 
 
-token, err := LoadToken(tokenPath)
+	token, err := LoadToken(tokenPath)
 	if err != nil {
 		// トークンがないか、読み込みに失敗した場合
 		fmt.Println("No token found. Starting new authentication flow.")
@@ -54,6 +56,11 @@ func newConfig() (*oauth2.Config, error) {
 		return nil, fmt.Errorf("BOX_CLIENT_ID and BOX_CLIENT_SECRET must be set")
 	}
 
+	redirectURL := os.Getenv("BOX_REDIRECT_URL")
+	if redirectURL == "" {
+		redirectURL = defaultRedirectURL
+	}
+
 	return &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -66,19 +73,56 @@ func newConfig() (*oauth2.Config, error) {
 	}, nil
 }
 
+
 func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error) {
 	authURL := cfg.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Your browser has been opened to visit the following URL:\n%s\n", authURL)
 
-	// TODO: ブラウザを実際に開く処理 (後で実装)
-
-	fmt.Println("Please enter the authorization code:")
-	var authCode string
-	if _, err := fmt.Scan(&authCode); err != nil {
-		return nil, err
+	// Parse the redirect URL to start the server on the correct address.
+	u, err := url.Parse(cfg.RedirectURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse redirect URL: %w", err)
 	}
 
-	return cfg.Exchange(ctx, authCode)
+	codeChan := make(chan string)
+	errChan := make(chan error)
+
+	server := &http.Server{Addr: u.Host}
+
+	http.DefaultServeMux = http.NewServeMux()
+	http.HandleFunc(u.Path, func(w http.ResponseWriter, r *http.Request) {
+		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
+			errChan <- fmt.Errorf("authentication failed: %s", errMsg)
+			return
+		}
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errChan <- fmt.Errorf("did not find 'code' query parameter")
+			return
+		}
+		fmt.Fprintln(w, "Authentication successful! You can close this window.")
+		codeChan <- code
+	})
+
+	go func() {
+		if err := server.ListenAndServe(); err != http.ErrServerClosed {
+			errChan <- err
+		}
+	}()
+	defer server.Shutdown(ctx)
+
+	fmt.Printf("Your browser has been opened to visit the following URL:\n%s\n", authURL)
+	if err := exec.Command("cmd", "/C", "start", authURL).Start(); err != nil {
+		fmt.Printf("Failed to open browser, please visit the URL manually: %v\n", err)
+	}
+
+	select {
+	case code := <-codeChan:
+		return cfg.Exchange(ctx, code)
+	case err := <-errChan:
+		return nil, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // getTokenPath はトークンを保存するパスを決定します。
