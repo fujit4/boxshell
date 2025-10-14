@@ -2,14 +2,17 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/oauth2"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -24,12 +27,10 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 		return nil, err
 	}
 
-
 	tokenPath, err := getTokenPath()
 	if err != nil {
 		return nil, err
 	}
-
 
 	token, err := LoadToken(tokenPath)
 	if err != nil {
@@ -43,6 +44,8 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 			return nil, err
 		}
 		fmt.Printf("Authentication successful. Token saved to %s\n", tokenPath)
+	} else {
+		// TODO:サーバ側で期限切れになっていないかチェック
 	}
 
 	return cfg.Client(ctx, token), nil
@@ -73,8 +76,21 @@ func newConfig() (*oauth2.Config, error) {
 	}, nil
 }
 
-
 func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error) {
+
+	var token *oauth2.Token
+
+	b := make([]byte, 16)
+    if _, err := rand.Read(b); err != nil {
+        return nil, err
+    }
+	state := base64.RawURLEncoding.EncodeToString(b)
+	// stateはcsrfトークン、リフレッシュトークンを発行してもらうにはOffiline
+	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
+
+
+
+
 	authURL := cfg.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 
 	// Parse the redirect URL to start the server on the correct address.

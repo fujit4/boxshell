@@ -5,23 +5,27 @@ import (
 	"boxshell/internal/boxapi"
 	"boxshell/internal/shell"
 	"context"
-	"fmt"
-	"os"
+	"log"
 )
 
 func main() {
+	if err := run(); err !=nil {
+		log.Fatalln(err)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
-	httpClient, err := auth.NewClient(ctx)
+	authedClient, err := auth.NewClient(ctx)
 	if err != nil {
-		fmt.Fprint(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
-	boxClient := boxapi.NewClient(httpClient)
-
+	boxClient := boxapi.NewClient(authedClient)
 	if err := shell.Run(ctx, boxClient); err != nil {
-		fmt.Fprint(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
+
+	return nil
 }
