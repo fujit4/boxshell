@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/skratchdot/open-golang/open"
 	"golang.org/x/oauth2"
 )
 
@@ -33,6 +35,10 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 	}
 
 	token, err := LoadToken(tokenPath)
+
+	retry := 1
+RetryPointOfRefleshTokenExpired:
+
 	if err != nil {
 		// トークンがないか、読み込みに失敗した場合
 		fmt.Println("No token found. Starting new authentication flow.")
@@ -46,6 +52,11 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 		fmt.Printf("Authentication successful. Token saved to %s\n", tokenPath)
 	} else {
 		// TODO:サーバ側で期限切れになっていないかチェック
+		isExpired := false
+		if isExpired && retry > 0 {
+			retry += 1
+			goto RetryPointOfRefleshTokenExpired
+		}
 	}
 
 	return cfg.Client(ctx, token), nil
@@ -59,6 +70,7 @@ func newConfig() (*oauth2.Config, error) {
 		return nil, fmt.Errorf("BOX_CLIENT_ID and BOX_CLIENT_SECRET must be set")
 	}
 
+	// TODO:localhostは固定にする
 	redirectURL := os.Getenv("BOX_REDIRECT_URL")
 	if redirectURL == "" {
 		redirectURL = defaultRedirectURL
@@ -81,64 +93,45 @@ func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error)
 	var token *oauth2.Token
 
 	b := make([]byte, 16)
-    if _, err := rand.Read(b); err != nil {
-        return nil, err
-    }
-	state := base64.RawURLEncoding.EncodeToString(b)
-	// stateはcsrfトークン、リフレッシュトークンを発行してもらうにはOffiline
-	url := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline)
-
-
-
-
-	authURL := cfg.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-
-	// Parse the redirect URL to start the server on the correct address.
-	u, err := url.Parse(cfg.RedirectURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse redirect URL: %w", err)
-	}
-
-	codeChan := make(chan string)
-	errChan := make(chan error)
-
-	server := &http.Server{Addr: u.Host}
-
-	http.DefaultServeMux = http.NewServeMux()
-	http.HandleFunc(u.Path, func(w http.ResponseWriter, r *http.Request) {
-		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-			errChan <- fmt.Errorf("authentication failed: %s", errMsg)
-			return
-		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			errChan <- fmt.Errorf("did not find 'code' query parameter")
-			return
-		}
-		fmt.Fprintln(w, "Authentication successful! You can close this window.")
-		codeChan <- code
-	})
-
-	go func() {
-		if err := server.ListenAndServe(); err != http.ErrServerClosed {
-			errChan <- err
-		}
-	}()
-	defer server.Shutdown(ctx)
-
-	fmt.Printf("Your browser has been opened to visit the following URL:\n%s\n", authURL)
-	if err := exec.Command("cmd", "/C", "start", authURL).Start(); err != nil {
-		fmt.Printf("Failed to open browser, please visit the URL manually: %v\n", err)
-	}
-
-	select {
-	case code := <-codeChan:
-		return cfg.Exchange(ctx, code)
-	case err := <-errChan:
+	if _, err := rand.Read(b); err != nil {
 		return nil, err
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
+
+	// stateはcsrfトークン
+	state := base64.RawURLEncoding.EncodeToString(b)
+	// verifierはPKCE
+	verifier := oauth2.GenerateVerifier()
+	// リフレッシュトークンを発行してもらうにはOffiline
+	authCodeURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
+
+	// コールバックを受け取るウェブサーバーをセットアップ
+	code := make(chan string)
+	var server *http.Server
+	server = &http.Server{
+		Addr: ":18888",
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// クエリーパラメータからcodeを取得し、ブラウザを閉じる
+			w.Header().Set("Content-Type", "text/html")
+			io.WriteString(w, "<html><script>window.open('about:blank','_self').close()</script></html>")
+			w.(http.Flusher).Flush()
+			code <- r.URL.Query().Get("code")
+			// サーバーも閉じる
+			server.Shutdown(context.Background())
+		}),
+	}
+	go server.ListenAndServe()
+
+	// ブラウザで認可画面を開く
+	// 認可が完了すれば上記のサーバーにリダイレクト
+	open.Start(authCodeURL)
+
+	token, err := cfg.Exchange(ctx, <-code, oauth2.VerifierOption(verifier))
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+
 }
 
 // getTokenPath はトークンを保存するパスを決定します。
