@@ -3,7 +3,6 @@ package main
 import (
 	"boxshell/internal/auth"
 	"boxshell/internal/boxapi"
-	"fmt"
 
 	"boxshell/internal/shell"
 	"context"

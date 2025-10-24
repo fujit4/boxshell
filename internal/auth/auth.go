@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"boxshell/internal/boxapi"
 
@@ -82,10 +84,14 @@ func newConfig() (*oauth2.Config, error) {
 		return nil, fmt.Errorf("BOX_CLIENT_ID and BOX_CLIENT_SECRET must be set")
 	}
 
-	// TODO:localhostは固定にする
+	// 環境変数からリダイレクトURLを取得。localhost以外は許可しない
 	redirectURL := os.Getenv("BOX_REDIRECT_URL")
 	if redirectURL == "" {
 		redirectURL = defaultRedirectURL
+	} else {
+		if !strings.HasPrefix(redirectURL, "http://localhost:") {
+			return nil, fmt.Errorf("invalid redirect URL: %s. must start with http://localhost:", redirectURL)
+		}
 	}
 
 	return &oauth2.Config{
@@ -116,11 +122,20 @@ func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error)
 	// リフレッシュトークンを発行してもらうにはOffiline
 	authCodeURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.S256ChallengeOption(verifier))
 
+	parsedURL, err := url.Parse(cfg.RedirectURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse redirect URL: %w", err)
+	}
+	port := parsedURL.Port()
+	if port == "" {
+		return nil, fmt.Errorf("port not found in redirect URL")
+	}
+
 	// コールバックを受け取るウェブサーバーをセットアップ
 	code := make(chan string)
 	var server *http.Server
 	server = &http.Server{
-		Addr: ":8585",
+		Addr: fmt.Sprintf(":%s", port),
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// クエリーパラメータからcodeを取得し、ブラウザを閉じる
 			w.Header().Set("Content-Type", "text/html")
@@ -139,7 +154,7 @@ func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error)
 
 	var codeVal string
 	codeVal = <- code
-	token, err := cfg.Exchange(ctx, codeVal, oauth2.VerifierOption(verifier))
+	token, err = cfg.Exchange(ctx, codeVal, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, err
 	}
