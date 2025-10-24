@@ -94,3 +94,35 @@ func (c *Client) GetFolderItems(ctx context.Context, folderID string) ([]Item, e
 
 	return itemCollection.Entries, nil
 }
+
+// User は Box のユーザー情報を表します。
+type User struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Login string `json:"login"`
+}
+
+// GetMe は現在のユーザー情報を取得します。
+func (c *Client) GetMe(ctx context.Context) (*User, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/users/me", apiURL), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get user info: %s", resp.Status)
+	}
+
+	var user User
+	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}

@@ -25,7 +25,6 @@ func run() error {
 	}
 
 	boxClient := boxapi.NewClient(authedClient)
-	fmt.Println(boxClient)
 	if err := shell.Run(ctx, boxClient); err != nil {
 		return err
 	}

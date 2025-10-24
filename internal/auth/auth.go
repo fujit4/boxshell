@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"boxshell/internal/boxapi"
+
 	"github.com/skratchdot/open-golang/open"
 	"golang.org/x/oauth2"
 )
@@ -34,7 +36,7 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 
 	token, err := LoadToken(tokenPath)
 
-	retry := 1
+	restRetry := 1
 RetryPointOfRefleshTokenExpired:
 
 	if err != nil {
@@ -49,11 +51,23 @@ RetryPointOfRefleshTokenExpired:
 		}
 		fmt.Printf("Authentication successful. Token saved to %s\n", tokenPath)
 	} else {
-		// TODO:サーバ側で期限切れになっていないかチェック
+		// トークンの有効性を確認
+		client := boxapi.NewClient(cfg.Client(ctx, token))
+		user, err := client.GetMe(ctx)
 		isExpired := false
-		if isExpired && retry > 0 {
-			retry += 1
+		if err != nil {
+			// API呼び出し失敗＝トークン切れと判断
+			isExpired = true
+		}
+
+		if isExpired && restRetry > 0 {
+			restRetry--
+			fmt.Println("Token has expired. Retrying to get a new token...")
+			err = fmt.Errorf("token expired and will be refreshed") // errをnon-nilにしてgoto後のifに入るようにする
 			goto RetryPointOfRefleshTokenExpired
+		} else if err == nil {
+			// ユーザー情報を表示
+			fmt.Printf("Authenticated as: %s (%s)\n", user.Name, user.Login)
 		}
 	}
 
