@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/skratchdot/open-golang/open"
@@ -84,7 +82,7 @@ func newConfig() (*oauth2.Config, error) {
 			TokenURL: "https://api.box.com/oauth2/token",
 		},
 		RedirectURL: redirectURL,
-		Scopes:      []string{"root_readwrite", "manage_managed_users"},
+		Scopes:      []string{"root_readwrite"},
 	}, nil
 }
 
@@ -108,7 +106,7 @@ func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error)
 	code := make(chan string)
 	var server *http.Server
 	server = &http.Server{
-		Addr: ":18888",
+		Addr: ":8585",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// クエリーパラメータからcodeを取得し、ブラウザを閉じる
 			w.Header().Set("Content-Type", "text/html")
@@ -125,7 +123,9 @@ func getNewToken(ctx context.Context, cfg *oauth2.Config) (*oauth2.Token, error)
 	// 認可が完了すれば上記のサーバーにリダイレクト
 	open.Start(authCodeURL)
 
-	token, err := cfg.Exchange(ctx, <-code, oauth2.VerifierOption(verifier))
+	var codeVal string
+	codeVal = <- code
+	token, err := cfg.Exchange(ctx, codeVal, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, err
 	}

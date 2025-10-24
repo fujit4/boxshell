@@ -3,6 +3,8 @@ package main
 import (
 	"boxshell/internal/auth"
 	"boxshell/internal/boxapi"
+	"fmt"
+
 	"boxshell/internal/shell"
 	"context"
 	"log"
@@ -23,6 +25,7 @@ func run() error {
 	}
 
 	boxClient := boxapi.NewClient(authedClient)
+	fmt.Println(boxClient)
 	if err := shell.Run(ctx, boxClient); err != nil {
 		return err
 	}
