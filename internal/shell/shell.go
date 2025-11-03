@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/skratchdot/open-golang/open"
 )
 
 // Shell は REPL の状態を管理します。
@@ -135,6 +137,12 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 			}
 
 			if err := sh.changeBoxDir(ctx, targetPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+		case "start":
+			url := "https://app.box.com/folder/" + sh.currentBoxDirID
+			fmt.Printf("Opening %s in your browser...\n", url)
+			if err := open.Run(url); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
 		case "pathmode":
