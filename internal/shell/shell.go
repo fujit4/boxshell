@@ -3,6 +3,7 @@ package shell
 import (
 	"bufio"
 	"boxshell/internal/boxapi"
+	"boxshell/internal/config"
 	"context"
 	"fmt"
 	"os"
@@ -11,17 +12,37 @@ import (
 
 // Shell は REPL の状態を管理します。
 type Shell struct {
-	boxClient       *boxapi.Client
-	currentBoxDirID string
-	currentBoxPath  string
+	boxClient        *boxapi.Client
+	config           *config.Config
+	currentBoxDirID  string
+	currentBoxPath   string // 表示用のフォーマット済みパス
+	canonicalBoxPath string // 内部処理用の正規パス (例: /foo/bar)
+}
+
+// formatPath は正規パスを現在のパスモードに合わせてフォーマットします。
+func (sh *Shell) formatPath(canonicalPath string) string {
+	if sh.config.PathMode == config.ModeWindows {
+		if canonicalPath == "/" {
+			return "Z:\\"
+		}
+		// "/" を "\\" に置換し、先頭に "Z:" を付ける
+		return "Z:" + strings.ReplaceAll(canonicalPath, "/", "\\")
+	}
+	// linuxモード
+	return canonicalPath
 }
 
 // Run は REPL を開始します。
 func Run(ctx context.Context, boxClient *boxapi.Client) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
 	sh := &Shell{
 		boxClient:       boxClient,
+		config:          cfg,
 		currentBoxDirID: "0", // ルートから開始
-		currentBoxPath:  "/",
 	}
 
 	// 初期カレントディレクトリの情報を取得
@@ -63,16 +84,42 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 			}
 		case "cd":
 			if len(args) == 0 {
-				// cd の引数がない場合は何もしない（またはルートに戻るなど仕様による）
 				continue
 			}
-			if err := sh.changeBoxDir(ctx, args[0]); err != nil {
+			targetPath := args[0]
+			// Windowsモードの場合、パスを正規化する
+			if sh.config.PathMode == config.ModeWindows {
+				targetPath = strings.ReplaceAll(targetPath, "\\", "/")
+				// ドライブ文字を削除 (例: Z:/foo -> /foo)
+				if len(targetPath) >= 2 && targetPath[1] == ':' {
+					targetPath = targetPath[2:]
+				}
+			}
+
+			if err := sh.changeBoxDir(ctx, targetPath); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+		case "pathmode":
+			if len(args) == 0 {
+				fmt.Printf("Current path mode: %s\n", sh.config.PathMode)
+				continue
+			}
+			mode := strings.ToLower(args[0])
+			if mode == config.ModeLinux || mode == config.ModeWindows {
+				sh.config.PathMode = mode
+				if err := sh.config.Save(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+				} else {
+					fmt.Printf("Path mode switched to %s\n", mode)
+					// プロンプト表示を更新
+					sh.currentBoxPath = sh.formatPath(sh.canonicalBoxPath)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Invalid mode. Use 'linux' or 'windows'.\n")
 			}
 		default:
 			fmt.Printf("Unknown command: %s\n", command)
 		}
-		_ = args // argsを一時的に使用済みとしてマーク
 	}
 
 	return scanner.Err()
@@ -80,7 +127,8 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 
 func (sh *Shell) updateCurrentBoxDirInfo(ctx context.Context) error {
 	if sh.currentBoxDirID == "0" {
-		sh.currentBoxPath = "/"
+		sh.canonicalBoxPath = "/"
+		sh.currentBoxPath = sh.formatPath(sh.canonicalBoxPath)
 		return nil
 	}
 
@@ -98,10 +146,12 @@ func (sh *Shell) updateCurrentBoxDirInfo(ctx context.Context) error {
 	}
 	pathParts = append(pathParts, folder.Name)
 
-	sh.currentBoxPath = "/" + strings.Join(pathParts, "/")
+	sh.canonicalBoxPath = "/" + strings.Join(pathParts, "/")
+	sh.currentBoxPath = sh.formatPath(sh.canonicalBoxPath)
 	return nil
 }
 
+// changeBoxDir は正規パス（/区切り）を元にディレクトリを変更します。
 func (sh *Shell) changeBoxDir(ctx context.Context, target string) error {
 	originalDirID := sh.currentBoxDirID
 	currentDirID := sh.currentBoxDirID
@@ -112,14 +162,13 @@ func (sh *Shell) changeBoxDir(ctx context.Context, target string) error {
 		path = strings.TrimPrefix(path, "/")
 	}
 
-	// パスが空文字列の場合（"cd /" や "cd" の後の空パス部分）、何もしない
 	if path == "" {
 		sh.currentBoxDirID = currentDirID
 		if err := sh.updateCurrentBoxDirInfo(ctx); err != nil {
 			sh.currentBoxDirID = originalDirID
 			return err
 		}
-return nil
+		return nil
 	}
 
 	parts := strings.Split(path, "/")
@@ -131,7 +180,7 @@ return nil
 
 		if part == ".." {
 			if currentDirID == "0" {
-				continue // ルートより上には行けない
+				continue
 			}
 			folder, err := sh.boxClient.GetFolder(ctx, currentDirID)
 			if err != nil {
@@ -156,6 +205,7 @@ return nil
 			if item.Type == "folder" && item.Name == part {
 				currentDirID = item.ID
 				found = true
+
 				break
 			}
 		}
@@ -167,7 +217,7 @@ return nil
 
 	sh.currentBoxDirID = currentDirID
 	if err := sh.updateCurrentBoxDirInfo(ctx); err != nil {
-		sh.currentBoxDirID = originalDirID // 失敗したら元に戻す
+		sh.currentBoxDirID = originalDirID
 		return err
 	}
 
