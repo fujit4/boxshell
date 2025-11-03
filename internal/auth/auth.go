@@ -39,9 +39,10 @@ func NewClient(ctx context.Context) (*http.Client, error) {
 	token, err := LoadToken(tokenPath)
 
 	restRetry := 1
+	isRetry := false
 RetryPointOfRefleshTokenExpired:
 
-	if err != nil {
+	if isRetry || err != nil {
 		// トークンがないか、読み込みに失敗した場合
 		fmt.Println("No token found. Starting new authentication flow.")
 		token, err = getNewToken(ctx, cfg)
@@ -65,7 +66,7 @@ RetryPointOfRefleshTokenExpired:
 		if isExpired && restRetry > 0 {
 			restRetry--
 			fmt.Println("Token has expired. Retrying to get a new token...")
-			err = fmt.Errorf("token expired and will be refreshed") // errをnon-nilにしてgoto後のifに入るようにする
+			isRetry = true
 			goto RetryPointOfRefleshTokenExpired
 		} else if err == nil {
 			// ユーザー情報を表示

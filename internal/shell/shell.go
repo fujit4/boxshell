@@ -104,48 +104,72 @@ func (sh *Shell) updateCurrentBoxDirInfo(ctx context.Context) error {
 
 func (sh *Shell) changeBoxDir(ctx context.Context, target string) error {
 	originalDirID := sh.currentBoxDirID
+	currentDirID := sh.currentBoxDirID
 
-	switch target {
-	case "/":
-		sh.currentBoxDirID = "0"
-	case "..":
-		if sh.currentBoxDirID == "0" {
-			return nil // ルートより上には行けない
+	path := target
+	if strings.HasPrefix(path, "/") {
+		currentDirID = "0"
+		path = strings.TrimPrefix(path, "/")
+	}
+
+	// パスが空文字列の場合（"cd /" や "cd" の後の空パス部分）、何もしない
+	if path == "" {
+		sh.currentBoxDirID = currentDirID
+		if err := sh.updateCurrentBoxDirInfo(ctx); err != nil {
+			sh.currentBoxDirID = originalDirID
+			return err
 		}
-		folder, err := sh.boxClient.GetFolder(ctx, sh.currentBoxDirID)
+return nil
+	}
+
+	parts := strings.Split(path, "/")
+
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+
+		if part == ".." {
+			if currentDirID == "0" {
+				continue // ルートより上には行けない
+			}
+			folder, err := sh.boxClient.GetFolder(ctx, currentDirID)
+			if err != nil {
+				return err
+			}
+			if len(folder.PathCollection.Entries) > 1 {
+				parent := folder.PathCollection.Entries[len(folder.PathCollection.Entries)-2]
+				currentDirID = parent.ID
+			} else {
+				currentDirID = "0"
+			}
+			continue
+		}
+
+		items, err := sh.boxClient.GetFolderItems(ctx, currentDirID)
 		if err != nil {
 			return err
 		}
-		if len(folder.PathCollection.Entries) > 1 {
-			// 親は path_collection の最後から2番目
-			parent := folder.PathCollection.Entries[len(folder.PathCollection.Entries)-2]
-			sh.currentBoxDirID = parent.ID
-		} else {
-			// ルート直下の場合はルートに戻る
-			sh.currentBoxDirID = "0"
-		}
-	default:
-		items, err := sh.boxClient.GetFolderItems(ctx, sh.currentBoxDirID)
-		if err != nil {
-			return err
-		}
+
 		found := false
 		for _, item := range items {
-			if item.Type == "folder" && item.Name == target {
-				sh.currentBoxDirID = item.ID
+			if item.Type == "folder" && item.Name == part {
+				currentDirID = item.ID
 				found = true
 				break
 			}
 		}
+
 		if !found {
-			return fmt.Errorf("directory not found: %s", target)
+			return fmt.Errorf("directory not found: %s", part)
 		}
 	}
 
+	sh.currentBoxDirID = currentDirID
 	if err := sh.updateCurrentBoxDirInfo(ctx); err != nil {
-		// ディレクトリ変更に失敗した場合は元に戻す
-		sh.currentBoxDirID = originalDirID
+		sh.currentBoxDirID = originalDirID // 失敗したら元に戻す
 		return err
 	}
+
 	return nil
 }
