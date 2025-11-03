@@ -59,7 +59,7 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
-		fmt.Printf("box:%s> ", sh.currentBoxPath)
+				fmt.Printf("box: %s>", sh.currentBoxPath)
 
 		if !scanner.Scan() {
 			break
