@@ -11,6 +11,48 @@ import (
 	"time"
 )
 
+// FindLatestDownloadedFile はダウンロードキャッシュから指定された名前の最新のファイルを検索します。
+func FindLatestDownloadedFile(name string) (string, error) {
+	baseDir := os.Getenv("XDG_DATA_HOME")
+	if baseDir == "" {
+		baseDir = os.Getenv("LOCALAPPDATA")
+		if baseDir == "" {
+			return "", fmt.Errorf("neither XDG_DATA_HOME nor LOCALAPPDATA are set")
+		}
+	}
+	downloadDir := filepath.Join(baseDir, "boxshell")
+
+	var latestFile string
+	var latestTimestamp string
+
+	err := filepath.Walk(downloadDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && info.Name() == name {
+			parts := strings.Split(filepath.ToSlash(path), "/")
+			if len(parts) >= 3 {
+				timestamp := parts[len(parts)-2]
+				if latestTimestamp == "" || timestamp > latestTimestamp {
+					latestTimestamp = timestamp
+					latestFile = path
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	if latestFile == "" {
+		return "", fmt.Errorf("file not found in download cache: %s", name)
+	}
+
+	return latestFile, nil
+}
+
 // Download は Box からファイルをダウンロードして、ローカルストレージに保存します。
 func Download(ctx context.Context, client *boxapi.Client, fileID, fileName, localDir string) (string, error) {
 	var destPath string

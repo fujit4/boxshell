@@ -231,16 +231,27 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 
 		case "ul":
 			if len(args) == 0 {
-				fmt.Fprintf(os.Stderr, "Usage: ul -l <local_path>\n")
+				fmt.Fprintf(os.Stderr, "Usage: ul [-l <local_path>] <name>\n")
 				continue
 			}
 
-			var localPath string
-			if len(args) == 2 && args[0] == "-l" {
+			var localPath, name string
+			useLocalPath := false
+
+			if len(args) > 1 && args[0] == "-l" {
+				useLocalPath = true
 				localPath = args[1]
 			} else {
-				fmt.Fprintf(os.Stderr, "Usage: ul -l <local_path>\n")
-				continue
+				name = args[0]
+			}
+
+			if !useLocalPath {
+				var err error
+				localPath, err = storage.FindLatestDownloadedFile(name)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					continue
+				}
 			}
 
 			fileName := filepath.Base(localPath)
@@ -266,7 +277,7 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			} else {
-				fmt.Printf("Successfully uploaded %s (ID: %s)\n", uploadedFile.Name, uploadedFile.ID)
+				fmt.Printf("Successfully uploaded %s from %s (ID: %s)\n", uploadedFile.Name, localPath, uploadedFile.ID)
 				// Refresh ls cache
 				sh.lastLsItems, _ = sh.boxClient.GetFolderItems(ctx, sh.currentBoxDirID)
 			}
