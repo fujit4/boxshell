@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,7 @@ type Shell struct {
 	currentBoxDirID  string
 	currentBoxPath   string // 表示用のフォーマット済みパス
 	canonicalBoxPath string // 内部処理用の正規パス (例: /foo/bar)
+	lastLsItems      []boxapi.Item
 }
 
 // formatPath は正規パスを現在のパスモードに合わせてフォーマットします。
@@ -77,15 +79,51 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 			items, err := sh.boxClient.GetFolderItems(ctx, sh.currentBoxDirID)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				sh.lastLsItems = nil // エラー時は前回結果をクリア
 			} else {
-				for _, item := range items {
-					fmt.Printf("[%s] %s\n", item.Type, item.Name)
+				sh.lastLsItems = items // 結果を保存
+				for i, item := range items {
+					icon := "[f]"
+					if item.Type == "folder" {
+						icon = "[d]"
+					}
+					fmt.Printf("%d %s %s\n", i+1, icon, item.Name)
 				}
 			}
 		case "cd":
 			if len(args) == 0 {
 				continue
 			}
+
+			// `cd -n <number>` のロジック
+			if len(args) == 2 && args[0] == "-n" {
+				num, err := strconv.Atoi(args[1])
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Invalid number format\n")
+					continue
+				}
+				if sh.lastLsItems == nil {
+					fmt.Fprintf(os.Stderr, "Error: 'ls' must be run first to use numbered navigation\n")
+					continue
+				}
+				if num < 1 || num > len(sh.lastLsItems) {
+					fmt.Fprintf(os.Stderr, "Error: Number out of range\n")
+					continue
+				}
+
+				targetItem := sh.lastLsItems[num-1]
+				if targetItem.Type != "folder" {
+					fmt.Fprintf(os.Stderr, "Error: Item %d is not a directory\n", num)
+					continue
+				}
+
+				if err := sh.changeBoxDir(ctx, targetItem.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+				continue // このコマンドの処理は完了
+			}
+
+			// 既存のパス指定のcdロジック
 			targetPath := args[0]
 			// Windowsモードの場合、パスを正規化する
 			if sh.config.PathMode == config.ModeWindows {
