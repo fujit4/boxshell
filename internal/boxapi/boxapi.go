@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -41,6 +42,26 @@ type Item struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
 	Name string `json:"name"`
+}
+
+// DownloadFile は指定された fileID のファイルコンテンツを取得します。
+func (c *Client) DownloadFile(ctx context.Context, fileID string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/files/%s/content", apiURL, fileID), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("failed to download file: %s", resp.Status)
+	}
+
+	return resp.Body, nil
 }
 
 // GetFolder は指定されたフォルダIDの詳細を取得します。

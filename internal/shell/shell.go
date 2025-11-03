@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"boxshell/internal/boxapi"
 	"boxshell/internal/config"
+	"boxshell/internal/storage"
 	"context"
 	"fmt"
 	"os"
@@ -145,6 +146,88 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 			if err := open.Run(url); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
+		case "dl":
+			if len(args) == 0 {
+				fmt.Fprintf(os.Stderr, "Usage: dl [-l <local_dir>] [-n <number> | <name>]\n")
+				continue
+			}
+
+			var localDir, numStr, name string
+
+			// 引数をパース
+			for i := 0; i < len(args); i++ {
+				switch args[i] {
+				case "-l":
+					if i+1 < len(args) {
+						localDir = args[i+1]
+						i++
+					} else {
+						fmt.Fprintf(os.Stderr, "Error: -l requires a directory\n")
+						continue
+					}
+				case "-n":
+					if i+1 < len(args) {
+						numStr = args[i+1]
+						i++
+					} else {
+						fmt.Fprintf(os.Stderr, "Error: -n requires a number\n")
+						continue
+					}
+				default:
+					name = args[i]
+				}
+			}
+
+			var targetItem *boxapi.Item
+
+			if numStr != "" {
+				num, err := strconv.Atoi(numStr)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: Invalid number format for -n\n")
+					continue
+				}
+				if sh.lastLsItems == nil {
+					fmt.Fprintf(os.Stderr, "Error: 'ls' must be run first to use numbered navigation\n")
+					continue
+				}
+				if num < 1 || num > len(sh.lastLsItems) {
+					fmt.Fprintf(os.Stderr, "Error: Number out of range\n")
+					continue
+				}
+				targetItem = &sh.lastLsItems[num-1]
+			} else if name != "" {
+				found := false
+				for i, item := range sh.lastLsItems {
+					if item.Name == name {
+						targetItem = &sh.lastLsItems[i]
+						found = true
+						break
+					}
+				}
+				if !found {
+					fmt.Fprintf(os.Stderr, "Error: File not found in current directory: %s\n", name)
+					continue
+				}
+			}
+
+			if targetItem == nil {
+				fmt.Fprintf(os.Stderr, "Error: No file specified for download.\n")
+				continue
+			}
+
+			if targetItem.Type != "file" {
+				fmt.Fprintf(os.Stderr, "Error: Item is not a file: %s\n", targetItem.Name)
+				continue
+			}
+
+			fmt.Printf("Downloading %s...\n", targetItem.Name)
+			destPath, err := storage.Download(ctx, sh.boxClient, targetItem.ID, targetItem.Name, localDir)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			} else {
+				fmt.Printf("Successfully downloaded to %s\n", destPath)
+			}
+
 		case "pathmode":
 			if len(args) == 0 {
 				fmt.Printf("Current path mode: %s\n", sh.config.PathMode)
