@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,7 +30,7 @@ func Download(ctx context.Context, client *boxapi.Client, fileID, fileName, loca
 				return "", fmt.Errorf("neither XDG_DATA_HOME nor LOCALAPPDATA are set")
 			}
 		}
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		timestamp := strings.Replace(time.Now().Format("20060102150405.000"), ".", "", 1)
 		destDir := filepath.Join(baseDir, "boxshell", fileID, timestamp)
 		if err := os.MkdirAll(destDir, 0755); err != nil {
 			return "", fmt.Errorf("failed to create destination directory: %w", err)
