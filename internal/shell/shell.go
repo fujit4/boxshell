@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -226,6 +227,48 @@ func Run(ctx context.Context, boxClient *boxapi.Client) error {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			} else {
 				fmt.Printf("Successfully downloaded to %s\n", destPath)
+			}
+
+		case "ul":
+			if len(args) == 0 {
+				fmt.Fprintf(os.Stderr, "Usage: ul -l <local_path>\n")
+				continue
+			}
+
+			var localPath string
+			if len(args) == 2 && args[0] == "-l" {
+				localPath = args[1]
+			} else {
+				fmt.Fprintf(os.Stderr, "Usage: ul -l <local_path>\n")
+				continue
+			}
+
+			fileName := filepath.Base(localPath)
+			var existingFile *boxapi.Item
+			for i, item := range sh.lastLsItems {
+				if item.Type == "file" && item.Name == fileName {
+					existingFile = &sh.lastLsItems[i]
+					break
+				}
+			}
+
+			var uploadedFile *boxapi.Item
+			var err error
+
+			if existingFile != nil {
+				fmt.Printf("Uploading new version of %s...\n", fileName)
+				uploadedFile, err = sh.boxClient.UploadNewVersion(ctx, existingFile.ID, localPath)
+			} else {
+				fmt.Printf("Uploading new file %s...\n", fileName)
+				uploadedFile, err = sh.boxClient.UploadFile(ctx, sh.currentBoxDirID, localPath)
+			}
+
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			} else {
+				fmt.Printf("Successfully uploaded %s (ID: %s)\n", uploadedFile.Name, uploadedFile.ID)
+				// Refresh ls cache
+				sh.lastLsItems, _ = sh.boxClient.GetFolderItems(ctx, sh.currentBoxDirID)
 			}
 
 		case "pathmode":
